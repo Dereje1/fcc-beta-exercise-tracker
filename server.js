@@ -35,6 +35,26 @@ const userSchema = new mongoose.Schema({
 const Exercise = mongoose.model('Exercise', exerciseSchema)
 const User = mongoose.model('User', userSchema)
 
+/* Middleware */
+const filterLogRequest = (req, res, next)=>{
+  const {userId, from, to, limit } = req.query
+  // verify from to and limit if empty or not use max and min unix date values
+  req.startDate = new Date(from) instanceof Date && !isNaN(new Date(from)) ? (new Date(from)).getTime() : -8640000000000000
+  req.endDate = new Date(to) instanceof Date && !isNaN(new Date(to)) ? (new Date(to)).getTime() : 8640000000000000
+  req.Limit = limit ? Number(limit) : 100 //respond with a maximum of 100 exercises
+  if(!userId) res.json({error: "Invalid UserId in query, please use /api/exercise/log?userId=<userId>"})
+  User.findById(userId,(err, data)=>{
+    if(err) res.json({error: err.message})
+    else { // data found start building report and look for exercises
+          req.report = {
+            id: data._id,
+            username: data.username,
+          }
+          next()
+        }
+  })
+}
+
 /* Api endpoints */
 
 // add New user
@@ -59,34 +79,17 @@ app.get('/api/exercise/users',(req, res)=>{
 })
 
 // get exersise log
-app.get('/api/exercise/log',(req, res)=>{
-  const {userId, from, to, limit } = req.query
-  // verify from to and limit if empty or not use max and min unix date values
-  const startDate = new Date(from) instanceof Date && !isNaN(new Date(from)) ? (new Date(from)).getTime() : -8640000000000000
-  const endDate = new Date(to) instanceof Date && !isNaN(new Date(to)) ? (new Date(to)).getTime() : 8640000000000000
-  const Limit = limit ? Number(limit) : 100 //respond with a maximum of 100 exercises
-  if(!userId) res.json({error: "Invalid UserId in query, please use /api/exercise/log?userId=<userId>"})
-  else{// query entered correctly
-    User.findById(userId,(err, data)=>{
-      if(err) res.json({error: err.message})
-      else { // data found start building report and look for exercises
-        const report = {
-          id: data._id,
-          username: data.username,
-        }
-        Exercise.find({userId}) //start exercises query
-          .where('date').gte(startDate).lte(endDate)
-          .limit(Limit)
-          .select({description: 1, duration: 1, date:1, _id: 0})
-          .exec((err, exdata) =>{
-                  if(err) return err
-                  report.exercises = exdata
-                  report.Total = exdata.length
-                  res.json(report)
-              })
-        }
-    })
-  }
+app.get('/api/exercise/log',filterLogRequest, (req, res)=>{
+    Exercise.find({userId: req.report.id}) //start exercises query
+      .where('date').gte(req.startDate).lte(req.endDate)
+      .limit(req.Limit)
+      .select({description: 1, duration: 1, date:1, _id: 0})
+      .exec((err, exdata) =>{
+              if(err) return err
+              exdata.length ? req.report.exercises = exdata : null
+              req.report.Total = exdata.length
+              res.json(req.report)
+          })
 })
 
 // update exercise
