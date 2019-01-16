@@ -23,15 +23,16 @@ app.get('/', (req, res) => {
 /* Monoogse schema and Models */
 // sub schema to hold exercise info
 const exerciseSchema = new mongoose.Schema({
+    userId: {type: mongoose.Schema.Types.ObjectId, ref: 'User'},
     description: {type: String, required: true},
     duration: {type: Number, required: true},
-    date: {type: Number, default: Date.now()}
+    date: {type: Number, default: Date.now()},
   })
 // main user schema
 const userSchema = new mongoose.Schema({
   username: {type: String, required: true},
-  exercises: {type:[exerciseSchema], default: undefined}
 })
+const Exercise = mongoose.model('Exercise', exerciseSchema)
 const User = mongoose.model('User', userSchema)
 
 /* Api endpoints */
@@ -60,33 +61,30 @@ app.get('/api/exercise/users',(req, res)=>{
 // get exersise log
 app.get('/api/exercise/log',(req, res)=>{
   const {userId, from, to, limit } = req.query
-  // verify from to and limit if empty or not proper dates written null
-  const startDate = new Date(from) instanceof Date && !isNaN(new Date(from)) ? (new Date(from)).getTime() : 0
-  const endDate = new Date(to) instanceof Date && !isNaN(new Date(to)) ? (new Date(to)).getTime() : null
-  const Limit = limit ? Number(limit) : null
-
+  // verify from to and limit if empty or not use max and min unix date values
+  const startDate = new Date(from) instanceof Date && !isNaN(new Date(from)) ? (new Date(from)).getTime() : -8640000000000000
+  const endDate = new Date(to) instanceof Date && !isNaN(new Date(to)) ? (new Date(to)).getTime() : 8640000000000000
+  const Limit = limit ? Number(limit) : 100 //respond with a maximum of 100 exercises
   if(!userId) res.json({error: "Invalid UserId in query, please use /api/exercise/log?userId=<userId>"})
   else{// query entered correctly
     User.findById(userId,(err, data)=>{
-      // wanted to chain requests here to filter data but was unable to since #elemMatch was returning only the
-      // first result of the exercise array, otherwise may have had to use aggregate, so used plain js to filter
-      // the data below
       if(err) res.json({error: err.message})
-      else { // data found
+      else { // data found start building report and look for exercises
         const report = {
           id: data._id,
           username: data.username,
-          Total: data.exercises ? data.exercises.length : 0
         }
-        if(data.exercises){// this block will not execute if no exercises have been entered by user
-          const filterByDates = data.exercises.filter((e)=>{
-            return endDate ? (e.date >= startDate && e.date <= endDate) : e.date >= startDate
-          })
-          report.exercises = Limit ? filterByDates.slice(0,Limit) : filterByDates
-          report.Total = report.exercises.length
+        Exercise.find({userId}) //start exercises query
+          .where('date').gte(startDate).lte(endDate)
+          .limit(Limit)
+          .select({description: 1, duration: 1, date:1, _id: 0})
+          .exec((err, exdata) =>{
+                  if(err) return err
+                  report.exercises = exdata
+                  report.Total = exdata.length
+                  res.json(report)
+              })
         }
-        res.json(report)
-      }
     })
   }
 })
@@ -98,13 +96,12 @@ app.post('/api/exercise/add', (req,res)=>{
     if(err) res.json({error: err.message})
     else{
       const newExercise = {
+        userId,
         description,
         duration,
         date: date ? new Date(date) : Date.now()
       }
-      const updateQuery = data.exercises ? [...data.exercises, newExercise] : [newExercise]
-      //important validators will not run for updates if runValidators: true is not included
-      User.findByIdAndUpdate(userId, { exercises: updateQuery }, {new : true, runValidators: true}, (err, data)=>{
+      Exercise.create(newExercise, (err, data)=>{
         if(err) res.json({error: err.message})
         res.json(data)
       })
